@@ -371,18 +371,23 @@ func (app *BaseApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
 		panic(fmt.Sprintf("unknown RequestCheckTx type: %s", req.Type))
 	}
 
-	gInfo, result, anteEvents, priority, err := app.runTx(mode, req.Tx)
+	gInfo, result, anteEvents, priority, txInfo, err := app.runTx(mode, req.Tx)
 	if err != nil {
 		return sdkerrors.ResponseCheckTxWithEvents(err, gInfo.GasWanted, gInfo.GasUsed, anteEvents, app.trace)
 	}
 
 	return abci.ResponseCheckTx{
-		GasWanted: int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
-		GasUsed:   int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
-		Log:       result.Log,
-		Data:      result.Data,
-		Events:    sdk.MarkEventsToIndex(result.Events, app.indexEvents),
-		Priority:  priority,
+		GasWanted:     int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
+		GasUsed:       int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
+		Log:           result.Log,
+		Data:          result.Data,
+		Events:        sdk.MarkEventsToIndex(result.Events, app.indexEvents),
+		Priority:      priority,
+		SignerAddress: txInfo.SignerAddress,
+		Nonce:         txInfo.Nonce,
+		GasLimit:      txInfo.GasLimit,
+		GasPrice:      txInfo.GasPrice,
+		Type:          txInfo.Type,
 	}
 }
 
@@ -410,7 +415,7 @@ func (app *BaseApp) DeliverTx(req abci.RequestDeliverTx) (res abci.ResponseDeliv
 		telemetry.SetGauge(float32(gInfo.GasWanted), "tx", "gas", "wanted")
 	}()
 
-	gInfo, result, anteEvents, _, err := app.runTx(runTxModeDeliver, req.Tx)
+	gInfo, result, anteEvents, _, _, err := app.runTx(runTxModeDeliver, req.Tx)
 	if err != nil {
 		resultStr = "failed"
 		return sdkerrors.ResponseDeliverTxWithEvents(err, gInfo.GasWanted, gInfo.GasUsed, sdk.MarkEventsToIndex(anteEvents, app.indexEvents), app.trace)

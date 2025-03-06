@@ -91,6 +91,11 @@ func SetMempool(mempool mempool.Mempool) func(*BaseApp) {
 	return func(app *BaseApp) { app.SetMempool(mempool) }
 }
 
+// SetTxInfoExtracter sets the tx info extracter on BaseApp.
+func SetTxInfoExtracter(tie sdk.TxInfoExtracter) func(*BaseApp) {
+	return func(app *BaseApp) { app.SetTxInfoExtracter(tie) }
+}
+
 // SetChainID sets the chain ID in BaseApp.
 func SetChainID(chainID string) func(*BaseApp) {
 	return func(app *BaseApp) { app.chainID = chainID }
@@ -275,6 +280,14 @@ func (app *BaseApp) SetMempool(mempool mempool.Mempool) {
 		panic("SetMempool() on sealed BaseApp")
 	}
 	app.mempool = mempool
+}
+
+func (app *BaseApp) SetTxInfoExtracter(tie sdk.TxInfoExtracter) {
+	if app.sealed {
+		panic("SetTxInfoExtracter() on sealed BaseApp")
+	}
+
+	app.txInfoExtracter = tie
 }
 
 // SetProcessProposal sets the process proposal function for the BaseApp.
