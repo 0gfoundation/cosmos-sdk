@@ -195,7 +195,7 @@ replace (
 	// use cosmos fork of keyring
 	github.com/99designs/keyring => github.com/cosmos/keyring v1.2.0
 	// Use cometbft fork of tendermint
-	github.com/cometbft/cometbft => github.com/kava-labs/cometbft v0.37.4-kava.1
+	// github.com/cometbft/cometbft => github.com/kava-labs/cometbft v0.37.4-kava.1
 	github.com/cometbft/cometbft-db => github.com/kava-labs/cometbft-db v0.9.1-kava.1
 	github.com/cosmos/iavl => github.com/kava-labs/iavl v1.2.0-kava.1
 	// dgrijalva/jwt-go is deprecated and doesn't receive security updates.
@@ -210,6 +210,8 @@ replace (
 	golang.org/x/exp => golang.org/x/exp v0.0.0-20230711153332-06a737ee72cb
 	// stick with compatible version of rapid in v0.47.x line
 	pgregory.net/rapid => pgregory.net/rapid v0.5.5
+
+	github.com/cometbft/cometbft => github.com/0glabs/cometbft v0.37.9-0glabs.2
 )
 
 retract (

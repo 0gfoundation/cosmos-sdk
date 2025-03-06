@@ -61,6 +61,7 @@ type BaseApp struct { //nolint: maligned
 	txEncoder         sdk.TxEncoder // marshal sdk.Tx into []byte
 
 	mempool         mempool.Mempool            // application side mempool
+	mempoolMaxTxs   int                        // maximum number of transactions to keep in mempool
 	txInfoExtracter sdk.TxInfoExtracter        // decode raw tx bytes into TxInfo
 	anteHandler     sdk.AnteHandler            // ante handler for fee and auth
 	postHandler     sdk.PostHandler            // post handler, optional, e.g. for tips
@@ -627,7 +628,7 @@ func (app *BaseApp) cacheTxContext(ctx sdk.Context, txBytes []byte) (sdk.Context
 // Note, gas execution info is always returned. A reference to a Result is
 // returned if the tx does not run out of gas and if all the messages are valid
 // and execute successfully. An error is returned otherwise.
-func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, result *sdk.Result, anteEvents []abci.Event, priority int64, txInfo *sdk.TxInfo, err error) {
+func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, result *sdk.Result, anteEvents []abci.Event, priority int64, txInfo *sdk.TxInfo, replaceableRawTx []byte, err error) {
 	// NOTE: GasWanted should be returned by the AnteHandler. GasUsed is
 	// determined by the GasMeter. We need access to the context to get the gas
 	// meter, so we initialize upfront.
@@ -638,7 +639,7 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 
 	// only run the tx if there is block gas remaining
 	if mode == runTxModeDeliver && ctx.BlockGasMeter().IsOutOfGas() {
-		return gInfo, nil, nil, 0, nil, sdkerrors.Wrap(sdkerrors.ErrOutOfGas, "no block gas left to run tx")
+		return gInfo, nil, nil, 0, nil, nil, sdkerrors.Wrap(sdkerrors.ErrOutOfGas, "no block gas left to run tx")
 	}
 
 	defer func() {
@@ -677,12 +678,12 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 
 	tx, err := app.txDecoder(txBytes)
 	if err != nil {
-		return sdk.GasInfo{}, nil, nil, 0, nil, err
+		return sdk.GasInfo{}, nil, nil, 0, nil, nil, err
 	}
 
 	msgs := tx.GetMsgs()
 	if err := validateBasicTxMsgs(msgs); err != nil {
-		return sdk.GasInfo{}, nil, nil, 0, nil, err
+		return sdk.GasInfo{}, nil, nil, 0, nil, nil, err
 	}
 
 	if app.anteHandler != nil {
@@ -718,7 +719,7 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 		gasWanted = ctx.GasMeter().Limit()
 
 		if err != nil {
-			return gInfo, nil, nil, 0, nil, err
+			return gInfo, nil, nil, 0, nil, nil, err
 		}
 
 		priority = ctx.Priority()
@@ -727,14 +728,39 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 	}
 
 	if mode == runTxModeCheck {
-		err = app.mempool.Insert(ctx, tx)
-		if err != nil {
-			return gInfo, nil, anteEvents, priority, nil, err
+		currentTxCnt := app.mempool.CountTx()
+		if currentTxCnt >= app.mempoolMaxTxs {
+			// mempool full, try to find a low gas price tx to replace
+			replaceableTxInfo, err := app.findReplaceableTx(ctx, tx)
+			if err != nil {
+				return gInfo, nil, nil, 0, nil, nil, err
+			}
+
+			app.logger.Info("replaced tx caused by low gas price", "new_tx", tx, "old_tx", replaceableTxInfo)
+			if replaceableTxInfo != nil {
+				// remove and insert
+				replaceableRawTx, err = app.txEncoder(replaceableTxInfo.tx)
+				if err != nil {
+					return gInfo, nil, nil, 0, nil, nil, err
+				}
+				app.mempool.Remove(replaceableTxInfo.tx)
+				err = app.mempool.Insert(ctx, tx)
+				if err != nil {
+					return gInfo, nil, nil, 0, nil, nil, err
+				}
+			} else {
+				return gInfo, nil, nil, 0, nil, nil, mempool.ErrMempoolTxMaxCapacity
+			}
+		} else {
+			err = app.mempool.Insert(ctx, tx)
+			if err != nil {
+				return gInfo, nil, anteEvents, priority, nil, nil, err
+			}
 		}
 	} else if mode == runTxModeDeliver {
 		err = app.mempool.Remove(tx)
 		if err != nil && !errors.Is(err, mempool.ErrTxNotFound) {
-			return gInfo, nil, anteEvents, priority, nil,
+			return gInfo, nil, anteEvents, priority, nil, nil,
 				fmt.Errorf("failed to remove tx from mempool: %w", err)
 		}
 	}
@@ -760,7 +786,7 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 
 			newCtx, err := app.postHandler(postCtx, tx, mode == runTxModeSimulate, err == nil)
 			if err != nil {
-				return gInfo, nil, anteEvents, priority, nil, err
+				return gInfo, nil, anteEvents, priority, nil, nil, err
 			}
 
 			result.Events = append(result.Events, newCtx.EventManager().ABCIEvents()...)
@@ -782,11 +808,11 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 	if mode == runTxModeCheck && app.txInfoExtracter != nil {
 		txInfo, err = app.txInfoExtracter(ctx, tx)
 		if err != nil {
-			return gInfo, nil, anteEvents, priority, nil, err
+			return gInfo, nil, anteEvents, priority, nil, nil, err
 		}
 	}
 
-	return gInfo, result, anteEvents, priority, txInfo, err
+	return gInfo, result, anteEvents, priority, txInfo, replaceableRawTx, err
 }
 
 // runMsgs iterates through a list of messages and executes them with the provided
@@ -892,7 +918,7 @@ func (app *BaseApp) PrepareProposalVerifyTx(tx sdk.Tx) ([]byte, error) {
 		return nil, err
 	}
 
-	_, _, _, _, _, err = app.runTx(runTxPrepareProposal, bz) //nolint:dogsled
+	_, _, _, _, _, _, err = app.runTx(runTxPrepareProposal, bz) //nolint:dogsled
 	if err != nil {
 		return nil, err
 	}
@@ -911,7 +937,7 @@ func (app *BaseApp) ProcessProposalVerifyTx(txBz []byte) (sdk.Tx, error) {
 		return nil, err
 	}
 
-	_, _, _, _, _, err = app.runTx(runTxProcessProposal, txBz) //nolint:dogsled
+	_, _, _, _, _, _, err = app.runTx(runTxProcessProposal, txBz) //nolint:dogsled
 	if err != nil {
 		return nil, err
 	}
@@ -922,4 +948,51 @@ func (app *BaseApp) ProcessProposalVerifyTx(txBz []byte) (sdk.Tx, error) {
 // Close is called in start cmd to gracefully cleanup resources.
 func (app *BaseApp) Close() error {
 	return nil
+}
+
+type txnInfo struct {
+	info *sdk.TxInfo
+	tx   sdk.Tx
+}
+
+func (app *BaseApp) findReplaceableTx(ctx sdk.Context, tx sdk.Tx) (*txnInfo, error) {
+	if app.txInfoExtracter == nil {
+		return nil, nil
+	}
+
+	thisInfo, err := app.txInfoExtracter(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	iterator := app.mempool.Select(ctx, nil)
+	txnInfoMap := make(map[string][]*txnInfo, app.mempool.CountTx())
+
+	for iterator != nil {
+		memTx := iterator.Tx()
+
+		info, err := app.txInfoExtracter(ctx, memTx)
+		if err == nil {
+			if _, exists := txnInfoMap[info.SignerAddress]; !exists {
+				txnInfoMap[info.SignerAddress] = make([]*txnInfo, 0)
+			}
+			txnInfoMap[info.SignerAddress] = append(txnInfoMap[info.SignerAddress], &txnInfo{info: info, tx: memTx})
+		}
+
+		iterator = iterator.Next()
+	}
+
+	for k := range txnInfoMap {
+		if k != thisInfo.SignerAddress {
+			sort.Slice(txnInfoMap[k], func(i, j int) bool {
+				return txnInfoMap[k][i].info.Nonce < txnInfoMap[k][j].info.Nonce
+			})
+
+			if thisInfo.GasPrice > txnInfoMap[k][len(txnInfoMap[k])-1].info.GasPrice {
+				return txnInfoMap[k][len(txnInfoMap[k])-1], nil
+			}
+		}
+	}
+
+	return nil, nil
 }

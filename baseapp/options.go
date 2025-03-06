@@ -91,6 +91,10 @@ func SetMempool(mempool mempool.Mempool) func(*BaseApp) {
 	return func(app *BaseApp) { app.SetMempool(mempool) }
 }
 
+func SetMempoolMaxTxs(mempoolMaxTxs int) func(*BaseApp) {
+	return func(app *BaseApp) { app.SetMempoolMaxTxs(mempoolMaxTxs) }
+}
+
 // SetTxInfoExtracter sets the tx info extracter on BaseApp.
 func SetTxInfoExtracter(tie sdk.TxInfoExtracter) func(*BaseApp) {
 	return func(app *BaseApp) { app.SetTxInfoExtracter(tie) }
@@ -280,6 +284,13 @@ func (app *BaseApp) SetMempool(mempool mempool.Mempool) {
 		panic("SetMempool() on sealed BaseApp")
 	}
 	app.mempool = mempool
+}
+
+func (app *BaseApp) SetMempoolMaxTxs(mempoolMaxTxs int) {
+	if app.sealed {
+		panic("SetMempoolMaxTxs() on sealed BaseApp")
+	}
+	app.mempoolMaxTxs = mempoolMaxTxs
 }
 
 func (app *BaseApp) SetTxInfoExtracter(tie sdk.TxInfoExtracter) {
