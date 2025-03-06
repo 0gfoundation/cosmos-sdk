@@ -71,6 +71,16 @@ type (
 
 		GetTimeoutHeight() uint64
 	}
+
+	TxInfo struct {
+		SignerAddress string
+		Nonce         uint64
+		GasLimit      uint64
+		GasPrice      uint64
+		Type          int32
+	}
+
+	TxInfoExtracter func(ctx Context, tx Tx) (*TxInfo, error)
 )
 
 // TxDecoder unmarshals transaction bytes
