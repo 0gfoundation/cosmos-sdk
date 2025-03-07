@@ -351,6 +351,20 @@ func (app *BaseApp) ProcessProposal(req abci.RequestProcessProposal) (resp abci.
 	return resp
 }
 
+func (app *BaseApp) EliminatedTx(req *abci.RequestEliminatedTx) abci.ResponseEliminatedTx {
+	if req != nil {
+		for i := range req.Txs {
+			tx, err := app.txDecoder(req.Txs[i])
+			if err != nil {
+				app.logger.Error("txDecoder failed", "error", err.Error())
+				continue
+			}
+			app.mempool.Remove(tx)
+		}
+	}
+	return abci.ResponseEliminatedTx{}
+}
+
 // CheckTx implements the ABCI interface and executes a tx in CheckTx mode. In
 // CheckTx mode, messages are not executed. This means messages are only validated
 // and only the AnteHandler is executed. State is persisted to the BaseApp's
