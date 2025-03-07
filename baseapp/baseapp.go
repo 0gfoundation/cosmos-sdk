@@ -728,34 +728,16 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 	}
 
 	if mode == runTxModeCheck {
-		currentTxCnt := app.mempool.CountTx()
-		if currentTxCnt >= app.mempoolMaxTxs {
-			// mempool full, try to find a low gas price tx to replace
-			replaceableTxInfo, err := app.findReplaceableTx(ctx, tx)
-			if err != nil {
-				return gInfo, nil, nil, 0, nil, nil, err
-			}
-
-			app.logger.Info("replaced tx caused by low gas price", "new_tx", tx, "old_tx", replaceableTxInfo)
-			if replaceableTxInfo != nil {
-				// remove and insert
-				replaceableRawTx, err = app.txEncoder(replaceableTxInfo.tx)
-				if err != nil {
-					return gInfo, nil, nil, 0, nil, nil, err
-				}
-				app.mempool.Remove(replaceableTxInfo.tx)
-				err = app.mempool.Insert(ctx, tx)
-				if err != nil {
-					return gInfo, nil, nil, 0, nil, nil, err
-				}
-			} else {
-				return gInfo, nil, nil, 0, nil, nil, mempool.ErrMempoolTxMaxCapacity
-			}
-		} else {
-			err = app.mempool.Insert(ctx, tx)
+		if app.txInfoExtracter != nil {
+			txInfo, err = app.txInfoExtracter(ctx, tx)
 			if err != nil {
 				return gInfo, nil, anteEvents, priority, nil, nil, err
 			}
+		}
+
+		err = app.mempool.Insert(ctx, tx)
+		if err != nil {
+			return gInfo, nil, anteEvents, priority, nil, nil, err
 		}
 	} else if mode == runTxModeDeliver {
 		err = app.mempool.Remove(tx)
@@ -802,13 +784,6 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 		if len(anteEvents) > 0 && (mode == runTxModeDeliver || mode == runTxModeSimulate) {
 			// append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
-		}
-	}
-
-	if mode == runTxModeCheck && app.txInfoExtracter != nil {
-		txInfo, err = app.txInfoExtracter(ctx, tx)
-		if err != nil {
-			return gInfo, nil, anteEvents, priority, nil, nil, err
 		}
 	}
 
@@ -953,46 +928,4 @@ func (app *BaseApp) Close() error {
 type txnInfo struct {
 	info *sdk.TxInfo
 	tx   sdk.Tx
-}
-
-func (app *BaseApp) findReplaceableTx(ctx sdk.Context, tx sdk.Tx) (*txnInfo, error) {
-	if app.txInfoExtracter == nil {
-		return nil, nil
-	}
-
-	thisInfo, err := app.txInfoExtracter(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-
-	iterator := app.mempool.Select(ctx, nil)
-	txnInfoMap := make(map[string][]*txnInfo, app.mempool.CountTx())
-
-	for iterator != nil {
-		memTx := iterator.Tx()
-
-		info, err := app.txInfoExtracter(ctx, memTx)
-		if err == nil {
-			if _, exists := txnInfoMap[info.SignerAddress]; !exists {
-				txnInfoMap[info.SignerAddress] = make([]*txnInfo, 0)
-			}
-			txnInfoMap[info.SignerAddress] = append(txnInfoMap[info.SignerAddress], &txnInfo{info: info, tx: memTx})
-		}
-
-		iterator = iterator.Next()
-	}
-
-	for k := range txnInfoMap {
-		if k != thisInfo.SignerAddress {
-			sort.Slice(txnInfoMap[k], func(i, j int) bool {
-				return txnInfoMap[k][i].info.Nonce < txnInfoMap[k][j].info.Nonce
-			})
-
-			if thisInfo.GasPrice > txnInfoMap[k][len(txnInfoMap[k])-1].info.GasPrice {
-				return txnInfoMap[k][len(txnInfoMap[k])-1], nil
-			}
-		}
-	}
-
-	return nil, nil
 }
