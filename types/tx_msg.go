@@ -77,7 +77,7 @@ type (
 		Nonce         uint64
 		GasLimit      uint64
 		GasPrice      uint64
-		Type          int32
+		TxType        int32
 	}
 
 	TxInfoExtracter func(ctx Context, tx Tx) (*TxInfo, error)

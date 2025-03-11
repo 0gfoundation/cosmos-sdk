@@ -727,6 +727,13 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 	}
 
 	if mode == runTxModeCheck {
+		if app.txInfoExtracter != nil {
+			txInfo, err = app.txInfoExtracter(ctx, tx)
+			if err != nil {
+				return gInfo, nil, anteEvents, priority, nil, err
+			}
+		}
+
 		err = app.mempool.Insert(ctx, tx)
 		if err != nil {
 			return gInfo, nil, anteEvents, priority, nil, err
@@ -776,13 +783,6 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 		if len(anteEvents) > 0 && (mode == runTxModeDeliver || mode == runTxModeSimulate) {
 			// append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
-		}
-	}
-
-	if mode == runTxModeCheck && app.txInfoExtracter != nil {
-		txInfo, err = app.txInfoExtracter(ctx, tx)
-		if err != nil {
-			return gInfo, nil, anteEvents, priority, nil, err
 		}
 	}
 

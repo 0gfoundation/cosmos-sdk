@@ -376,18 +376,29 @@ func (app *BaseApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
 		return sdkerrors.ResponseCheckTxWithEvents(err, gInfo.GasWanted, gInfo.GasUsed, anteEvents, app.trace)
 	}
 
-	return abci.ResponseCheckTx{
-		GasWanted:     int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
-		GasUsed:       int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
-		Log:           result.Log,
-		Data:          result.Data,
-		Events:        sdk.MarkEventsToIndex(result.Events, app.indexEvents),
-		Priority:      priority,
-		SignerAddress: txInfo.SignerAddress,
-		Nonce:         txInfo.Nonce,
-		GasLimit:      txInfo.GasLimit,
-		GasPrice:      txInfo.GasPrice,
-		Type:          txInfo.Type,
+	if txInfo != nil {
+		return abci.ResponseCheckTx{
+			GasWanted:     int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
+			GasUsed:       int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
+			Log:           result.Log,
+			Data:          result.Data,
+			Events:        sdk.MarkEventsToIndex(result.Events, app.indexEvents),
+			Priority:      priority,
+			SignerAddress: txInfo.SignerAddress,
+			Nonce:         txInfo.Nonce,
+			GasLimit:      txInfo.GasLimit,
+			GasPrice:      txInfo.GasPrice,
+			Type:          txInfo.TxType,
+		}
+	} else {
+		return abci.ResponseCheckTx{
+			GasWanted: int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
+			GasUsed:   int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
+			Log:       result.Log,
+			Data:      result.Data,
+			Events:    sdk.MarkEventsToIndex(result.Events, app.indexEvents),
+			Priority:  priority,
+		}
 	}
 }
 
