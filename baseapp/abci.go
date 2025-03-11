@@ -376,30 +376,35 @@ func (app *BaseApp) CheckTx(req abci.RequestCheckTx) abci.ResponseCheckTx {
 		return sdkerrors.ResponseCheckTxWithEvents(err, gInfo.GasWanted, gInfo.GasUsed, anteEvents, app.trace)
 	}
 
-	if txInfo != nil {
-		return abci.ResponseCheckTx{
-			GasWanted:     int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
-			GasUsed:       int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
-			Log:           result.Log,
-			Data:          result.Data,
-			Events:        sdk.MarkEventsToIndex(result.Events, app.indexEvents),
-			Priority:      priority,
-			SignerAddress: txInfo.SignerAddress,
-			Nonce:         txInfo.Nonce,
-			GasLimit:      txInfo.GasLimit,
-			GasPrice:      txInfo.GasPrice,
-			Type:          txInfo.TxType,
-		}
-	} else {
-		return abci.ResponseCheckTx{
-			GasWanted: int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
-			GasUsed:   int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
-			Log:       result.Log,
-			Data:      result.Data,
-			Events:    sdk.MarkEventsToIndex(result.Events, app.indexEvents),
-			Priority:  priority,
-		}
+	resp := abci.ResponseCheckTx{
+		GasWanted: int64(gInfo.GasWanted), // TODO: Should type accept unsigned ints?
+		GasUsed:   int64(gInfo.GasUsed),   // TODO: Should type accept unsigned ints?
+		Log:       result.Log,
+		Data:      result.Data,
+		Events:    sdk.MarkEventsToIndex(result.Events, app.indexEvents),
+		Priority:  priority,
 	}
+
+	txHash := genTxHash(req.Tx)
+
+	app.mempoolSyncLock.Lock()
+	if _, exists := app.mempoolSyncCache[txHash]; exists {
+		replacedTx := app.mempoolSyncCache[txHash]
+		resp.ReplacedTx = make([]byte, len(replacedTx))
+		copy(resp.ReplacedTx, replacedTx)
+		delete(app.mempoolSyncCache, txHash)
+	}
+	app.mempoolSyncLock.Unlock()
+
+	if txInfo != nil {
+		resp.SignerAddress = txInfo.SignerAddress
+		resp.Nonce = txInfo.Nonce
+		resp.GasLimit = txInfo.GasLimit
+		resp.GasPrice = txInfo.GasPrice
+		resp.Type = txInfo.TxType
+	}
+
+	return resp
 }
 
 // DeliverTx implements the ABCI interface and executes a tx in DeliverTx mode.
