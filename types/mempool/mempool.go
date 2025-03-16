@@ -30,6 +30,9 @@ type MempoolExt interface {
 
 	// SelectBy use callback to iterate over the mempool, it's thread-safe to use.
 	SelectBy(context.Context, [][]byte, func(sdk.Tx) bool)
+
+	// GetSenderUncommittedTxsCount returns the number of uncommitted transactions for a given sender.
+	GetSenderUncommittedTxnCount(ctx context.Context, sender string) int
 }
 
 // Iterator defines an app-side mempool iterator interface that is as minimal as possible.  The order of iteration
@@ -58,4 +61,11 @@ func SelectBy(ctx context.Context, mempool Mempool, txs [][]byte, callback func(
 	for iter != nil && callback(iter.Tx()) {
 		iter = iter.Next()
 	}
+}
+
+func GetSenderUncommittedTxnCount(ctx context.Context, mempool Mempool, sender string) int {
+	if ext, ok := mempool.(MempoolExt); ok {
+		return ext.GetSenderUncommittedTxnCount(ctx, sender)
+	}
+	return 0
 }
