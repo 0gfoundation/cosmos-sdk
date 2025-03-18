@@ -45,21 +45,41 @@ func checkTxFeeWithValidatorMinGasPrices(ctx sdk.Context, tx sdk.Tx) (sdk.Coins,
 	return feeCoins, priority, nil
 }
 
+const (
+	chainBaseDenom = "neuron"
+	cosmosGasDenom = "ua0gi"
+	standardDenom  = "a0gi"
+
+	cosmosGasDenomConversionMultiplier = 1e12
+	standardDenomConversionMultiplier  = 1e18
+)
+
 // getTxPriority returns a naive tx priority based on the amount of the smallest denomination of the gas price
 // provided in a transaction.
 // NOTE: This implementation should be used with a great consideration as it opens potential attack vectors
 // where txs with multiple coins could not be prioritize as expected.
-func getTxPriority(fee sdk.Coins, gas int64) int64 {
+func getTxPriority(fee sdk.Coins, gasLimit int64) int64 {
 	var priority int64
+
+	totalFeeInBaseDenom := sdk.NewInt(0)
+
 	for _, c := range fee {
-		p := int64(math.MaxInt64)
-		gasPrice := c.Amount.QuoRaw(gas)
-		if gasPrice.IsInt64() {
-			p = gasPrice.Int64()
+		if c.Denom == chainBaseDenom {
+			totalFeeInBaseDenom = totalFeeInBaseDenom.Add(c.Amount)
+		} else if c.Denom == cosmosGasDenom {
+			totalFeeInBaseDenom = totalFeeInBaseDenom.Add(c.Amount.MulRaw(cosmosGasDenomConversionMultiplier))
+		} else if c.Denom == standardDenom {
+			totalFeeInBaseDenom = totalFeeInBaseDenom.Add(c.Amount.MulRaw(standardDenomConversionMultiplier))
+		} else {
+			// ignore other denominations
 		}
-		if priority == 0 || p < priority {
-			priority = p
-		}
+	}
+
+	gasPrice := totalFeeInBaseDenom.QuoRaw(gasLimit)
+	if gasPrice.IsInt64() {
+		priority = gasPrice.Int64()
+	} else {
+		priority = int64(math.MaxInt64)
 	}
 
 	return priority
