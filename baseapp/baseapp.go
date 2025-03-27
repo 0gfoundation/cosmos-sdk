@@ -1,10 +1,14 @@
 package baseapp
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	dbm "github.com/cometbft/cometbft-db"
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -145,6 +149,9 @@ type BaseApp struct { //nolint: maligned
 	abciListeners []ABCIListener
 
 	chainID string
+
+	mempoolSyncLock  sync.RWMutex
+	mempoolSyncCache map[string][]byte
 }
 
 // NewBaseApp returns a reference to an initialized BaseApp. It accepts a
@@ -165,6 +172,7 @@ func NewBaseApp(
 		msgServiceRouter: NewMsgServiceRouter(),
 		txDecoder:        txDecoder,
 		fauxMerkleMode:   false,
+		mempoolSyncCache: make(map[string][]byte),
 	}
 
 	for _, option := range options {
@@ -727,6 +735,13 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 	}
 
 	if mode == runTxModeCheck {
+		if app.txInfoExtracter != nil {
+			txInfo, err = app.txInfoExtracter(ctx, tx)
+			if err != nil {
+				return gInfo, nil, anteEvents, priority, nil, err
+			}
+		}
+
 		err = app.mempool.Insert(ctx, tx)
 		if err != nil {
 			return gInfo, nil, anteEvents, priority, nil, err
@@ -776,13 +791,6 @@ func (app *BaseApp) runTx(mode runTxMode, txBytes []byte) (gInfo sdk.GasInfo, re
 		if len(anteEvents) > 0 && (mode == runTxModeDeliver || mode == runTxModeSimulate) {
 			// append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
-		}
-	}
-
-	if mode == runTxModeCheck && app.txInfoExtracter != nil {
-		txInfo, err = app.txInfoExtracter(ctx, tx)
-		if err != nil {
-			return gInfo, nil, anteEvents, priority, nil, err
 		}
 	}
 
@@ -922,4 +930,32 @@ func (app *BaseApp) ProcessProposalVerifyTx(txBz []byte) (sdk.Tx, error) {
 // Close is called in start cmd to gracefully cleanup resources.
 func (app *BaseApp) Close() error {
 	return nil
+}
+
+func (app *BaseApp) RegisterMempoolTxReplacedEvent(ctx context.Context, oldTx, newTx sdk.Tx) error {
+	newRawTx, err := app.txEncoder(newTx)
+	if err != nil {
+		return err
+	}
+
+	oldRawTx, err := app.txEncoder(oldTx)
+	if err != nil {
+		return err
+	}
+
+	newRawTxHash := genTxHash(newRawTx)
+
+	app.mempoolSyncLock.Lock()
+	app.mempoolSyncCache[newRawTxHash] = oldRawTx
+	app.mempoolSyncLock.Unlock()
+
+	oldRawTxHash := genTxHash(oldRawTx)
+	app.Logger().Debug("Mempool tx replaced event registered", "new_tx_hash", newRawTxHash, "old_tx_hash", oldRawTxHash)
+
+	return nil
+}
+
+func genTxHash(tx []byte) string {
+	hash := sha256.Sum256(tx)
+	return hex.EncodeToString(hash[:])
 }
